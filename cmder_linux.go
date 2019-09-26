@@ -1,6 +1,6 @@
 // +build  !windows
 
-package cmder
+package simplecmder
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"syscall"
 
-	"github.com/YshShiori/simple_cmder/limitedwriter"
+	"github.com/YshShiori/simplecmder/limitedwriter"
 )
 
 func NewCmder(name string, args ...string) *Cmder {

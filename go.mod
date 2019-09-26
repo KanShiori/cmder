@@ -1,1 +1,1 @@
-module github.com/YshShiori/simple_cmder
+module github.com/YshShiori/simplecmder
