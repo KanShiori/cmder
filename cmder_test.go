@@ -1,4 +1,4 @@
-package simplecmder
+package cmder
 
 import (
 	"testing"

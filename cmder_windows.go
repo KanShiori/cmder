@@ -1,13 +1,13 @@
 // +build  windows
 
-package simplecmder
+package cmder
 
 import (
 	"bytes"
 	"os/exec"
 	"strconv"
 
-	"github.com/YshShiori/simplecmder/limitedwriter"
+	"github.com/YshShiori/cmder/limitedwriter"
 )
 
 func NewCmder(name string, args ...string) *Cmder {
