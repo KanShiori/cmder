@@ -1,13 +1,13 @@
 // +build  windows
 
-package simplecmder
+package cmder
 
 import (
 	"bytes"
 	"os/exec"
 	"strconv"
 
-	"github.com/YshShiori/simplecmder/limitedwriter"
+	"github.com/YshShiori/cmder/limitedwriter"
 )
 
 func NewCmder(name string, args ...string) *Cmder {
@@ -15,18 +15,16 @@ func NewCmder(name string, args ...string) *Cmder {
 		Name:         name,
 		Args:         args,
 		cmd:          nil,
-		status:       Create,
+		status:       Created,
 		stdoutBuffer: new(bytes.Buffer),
 		stderrBuffer: new(bytes.Buffer),
 		doneChan:     make(chan struct{}),
 		result: Result{
-			Code:    int(ErrorDefaultFailed),
-			ErrMsg:  "default msg",
-			Stdout:  "",
-			Stderr:  "",
-			Pid:     -1,
-			StartTs: -1,
-			StopTs:  -1,
+			Code:   int(ErrCodeDefault),
+			ErrMsg: "default msg",
+			Stdout: "",
+			Stderr: "",
+			Pid:    -1,
 		},
 	}
 
@@ -43,7 +41,7 @@ func NewCmder(name string, args ...string) *Cmder {
 
 func (c *Cmder) Stop() error {
 	// TODO: 解决Stop可能被多次调用的问题
-	if c.status == Create || c.status == Finish {
+	if c.status == Created || c.status == Finished {
 		return UnRunningError
 	}
 

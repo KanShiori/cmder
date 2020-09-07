@@ -1,43 +1,77 @@
-package simplecmder
+package cmder
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os/exec"
 	"syscall"
 	"time"
 )
 
-const (
-	// ErrorDefaultFailed 错误默认值(不会抛出)
-	ErrorDefaultFailed = 1001
-	// ErrorCmdDetached cmd执行超过2*timeout, detach cmd
-	ErrorCmdDetached = 1002
-	// ErrorCmdStartFailed cmd启动失败
-	ErrorCmdStartFailed = 1003
-	// ErrorCmdStartFailed cmd执行未知错误
-	ErrorCmdUnknownFailed = 1004
+type State int
 
-	// OutputBufferMaxSize 输出结果的最大大小
+const (
+	ErrCodeDefault       = 1001
+	ErrCodeDetached      = 1002
+	ErrCodeStartFailed   = 1003
+	ErrCodeUnknownFailed = 1004
+
 	OutputBufferMaxSize = 1024 * 1024
+
+	Created  State = 1
+	Running  State = 2
+	Finished State = 3
 )
 
 var (
-	// UnRunningError 当Stop不在运行的cmder时返回
 	UnRunningError = errors.New("cmder isn't running")
 )
 
-const (
-	Create  = 1
-	Running = 2
-	Finish  = 3
-)
-
-func ExecuteCmd(cmd string, dir string, timeout int) *Result {
-	cmder := NewCmder("sh", "-c", cmd)
-	if dir != "" {
-		cmder.SetDir(dir)
+func IsInternalErrCode(code int) bool {
+	switch code {
+	case ErrCodeDefault, ErrCodeDetached, ErrCodeStartFailed, ErrCodeUnknownFailed:
+		return true
 	}
+
+	return false
+}
+
+type Result struct {
+	Code   int
+	ErrMsg string
+	Stdout string
+	Stderr string
+	Pid    int
+
+	StartAt time.Time
+	StopAt  time.Time
+}
+
+func (r Result) String() string {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err.Error()
+	}
+	return string(data)
+}
+
+// ExecuteIn 阻塞执行cmd命令, 工作目录位于dir下, 超时设定为 timeout
+//
+// cmd 超时会经过一个 detach 的过程, 所以真正命令返回的最大时间可能是 2 * timeout.
+// 具体见 cmder.Execute 函数
+func ExecuteIn(cmd string, timeout time.Duration, dir string) *Result {
+	cmder := NewCmder("sh", "-c", cmd)
+	cmder.SetDir(dir)
+	return cmder.Execute(timeout)
+}
+
+// Execute 阻塞执行cmd命令, 超时设定为timeout
+//
+// cmd 超时会经过一个 detach 的过程, 所以真正命令返回的最大时间可能是2 * timeout.
+// 具体见 cmder.Execute 函数
+func Execute(cmd string, timeout time.Duration) *Result {
+	cmder := NewCmder("sh", "-c", cmd)
 	return cmder.Execute(timeout)
 }
 
@@ -47,51 +81,32 @@ type Cmder struct {
 	Args []string
 
 	cmd    *exec.Cmd
-	status int
+	status State
 
 	stdoutBuffer *bytes.Buffer
 	stderrBuffer *bytes.Buffer
-	result       Result
-	doneChan     chan struct{}
+
+	result   Result
+	doneChan chan struct{}
 }
 
-// Result 是一个Cmder执行后的结果
-// 其中:
-//	Code Cmder返回的错误码 或 cmd返回的错误码
-// 	ErrMsg Cmder返回的错误信息
-//	Stdout 执行cmd的stdout
-//	Stderr 执行cmd的stderr
-//	Pid 执行cmd的Pid
-//	StartTs cmd执行启动时间戳
-//	StopTs cmd执行结束时间戳
-type Result struct {
-	Code    int
-	ErrMsg  string
-	Stdout  string
-	Stderr  string
-	Pid     int
-	StartTs int64
-	StopTs  int64
-}
+// Execute 执行Cmder的命令, 并阻塞等待命令返回或者超时
+func (c *Cmder) Execute(timeout time.Duration) *Result {
 
-// Execute 执行Cmder的命令
-func (c *Cmder) Execute(timeout int) *Result {
-
-	// - start
+	// 异步启动
 	c.Start()
 
-	// - stop 计时器
-	timer := time.AfterFunc(time.Duration(timeout)*time.Second, func() {
+	// timeout时间内执行其命令的kill信号发送
+	timer := time.AfterFunc(timeout, func() {
 		c.Stop()
 	})
 
-	// - detach 计时器
-	detachedTimer := time.NewTimer(time.Duration(2*timeout) * time.Second)
+	detachedTimer := time.NewTimer(2 * timeout)
 
-	// - 等待cmd结束 / 超过detach计时
+	// 阻塞等待命令detach或者结束
 	select {
 	case <-detachedTimer.C:
-		c.result.Code = int(ErrorCmdDetached)
+		c.result.Code = int(ErrCodeDetached)
 		c.result.ErrMsg = "timeout too long, detach cmd"
 	case <-c.doneChan:
 		timer.Stop()
@@ -116,29 +131,33 @@ func (c *Cmder) SetDir(dir string) {
 	c.cmd.Dir = dir
 }
 
+func (c *Cmder) RawCmd() *exec.Cmd {
+	return c.cmd
+}
+
 func (c *Cmder) run() {
-	// --- final step: notify cmd finsish
+	// - final step: notify cmd finsish
 	defer func() {
 		close(c.doneChan)
-		c.status = Finish
+		c.status = Finished
 	}()
 
-	// --- start commond
-	nowTs := time.Now().Unix()
+	// - start commond
+	nowTime := time.Now()
 	err := c.cmd.Start()
 	if err != nil {
-		c.result.Code = int(ErrorCmdStartFailed)
+		c.result.Code = int(ErrCodeStartFailed)
 		c.result.ErrMsg = err.Error()
-		c.result.StartTs = nowTs
-		c.result.StopTs = nowTs
+		c.result.StartAt = nowTime
+		c.result.StopAt = nowTime
 		return
 	}
 
 	c.status = Running
-	c.result.StartTs = nowTs
+	c.result.StartAt = nowTime
 	c.result.Pid = c.cmd.Process.Pid
 
-	// --- wait command finish or be killed
+	// -  wait command Finished or be killed
 	err = c.cmd.Wait()
 	errcode := 0
 	errmsg := "success"
@@ -151,14 +170,14 @@ func (c *Cmder) run() {
 				errcode = wstatus.ExitStatus()
 			}
 		} else {
-			errcode = int(ErrorCmdUnknownFailed)
+			errcode = int(ErrCodeUnknownFailed)
 		}
 	}
 
-	// --- set result
+	// - set result
 	c.result.Code = errcode
 	c.result.ErrMsg = errmsg
-	c.result.StopTs = time.Now().Unix()
+	c.result.StopAt = time.Now()
 	c.result.Stdout = c.stdoutBuffer.String()
 	c.result.Stderr = c.stderrBuffer.String()
 	return

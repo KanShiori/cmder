@@ -1,2 +1,2 @@
-# SimpleCmder
+# cmder
 exec cmd in golang
