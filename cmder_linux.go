@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"syscall"
 
-	"github.com/YshShiori/cmder/limitedwriter"
+	"github.com/KanShiori/cmder/limitedwriter"
 )
 
 func NewCmder(name string, args ...string) *Cmder {
